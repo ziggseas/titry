@@ -89,6 +89,7 @@ button.chip.on { border-color: var(--amber); color: var(--amber); }
 .empty { color: var(--muted); padding: 1.4rem; border: 1px dashed var(--line); border-radius: var(--radius); text-align: center; margin: 0; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.1rem; margin-bottom: 1rem; }
 .panel.notice { border-color: var(--amber); }
+.panel.danger-zone { border-color: rgba(255, 107, 91, 0.45); }
 .error-box { text-align: center; padding: 3rem 1rem; display: grid; gap: 1rem; justify-items: center; }
 .loader { display: flex; gap: 6px; justify-content: center; padding: 3rem; }
 .loader span { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); animation: blink 1s infinite ease-in-out; }

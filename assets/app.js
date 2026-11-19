@@ -1146,6 +1146,10 @@ async function viewSettings(ctx) {
       <div id="imp"></div></div>
     <div class="panel"><h2 class="small-h">Экспорт</h2><p class="muted small">Все записи, дневник и списки одним JSON-файлом.</p><button class="btn ghost sm" id="exp">Скачать JSON</button></div>
     <div class="panel"><button class="btn ghost danger" id="out">Выйти из аккаунта</button></div>
+    <div class="panel danger-zone"><h2 class="small-h">Удаление аккаунта</h2>
+      <p class="muted small">Удалятся профиль, все оценки, дневник, рецензии, списки и подписки. Восстановить их будет нельзя — перед удалением можно скачать JSON выше.</p>
+      <form class="form" id="delf"><label>Чтобы подтвердить, введите своё имя пользователя <b>${esc(p.username || '')}</b><input name="confirm_name" autocomplete="off" required></label>
+      <button class="btn ghost danger" type="submit">Удалить аккаунт навсегда</button></form></div>
   </section>`;
 
   q$('#pf', app).onsubmit = async (ev) => {
@@ -1164,6 +1168,20 @@ async function viewSettings(ctx) {
     try { check(await sb.auth.updateUser({ password: ev.target.pw.value })); ev.target.reset(); toast('Пароль изменён'); } catch (err) { toast(errText(err), 'bad'); }
   };
   q$('#out', app).onclick = async () => { await sb.auth.signOut(); await setUser(null); go('/', true); };
+  q$('#delf', app).onsubmit = async (ev) => {
+    ev.preventDefault();
+    const btn = q$('button[type=submit]', ev.target);
+    if (ev.target.confirm_name.value.trim().toLowerCase() !== (S.profile?.username || '')) { toast('Имя пользователя не совпадает', 'bad'); return; }
+    if (!confirm('Удалить аккаунт и все данные без возможности восстановления?')) return;
+    btn.disabled = true;
+    try {
+      check(await sb.rpc('delete_my_account'));
+      await sb.auth.signOut({ scope: 'local' }).catch(() => {});
+      await setUser(null);
+      toast('Аккаунт удалён');
+      go('/', true);
+    } catch (err) { toast(errText(err), 'bad'); btn.disabled = false; }
+  };
   q$('#exp', app).onclick = exportJSON;
   const imp = q$('#imp', app);
   q$('#lbx', app).onchange = (ev) => importLetterboxd([...ev.target.files], imp).finally(() => (ev.target.value = ''));

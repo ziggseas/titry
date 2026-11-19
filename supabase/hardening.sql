@@ -80,3 +80,15 @@ create policy list_items_update on public.list_items for update
 drop policy if exists list_items_delete on public.list_items;
 create policy list_items_delete on public.list_items for delete
   using (exists (select 1 from public.lists l where l.id = list_id and l.user_id = (select auth.uid())));
+
+-- 5. Удаление своего аккаунта: удаляет пользователя из auth.users,
+--    профиль, записи, дневник, списки и подписки удаляются каскадом
+create or replace function public.delete_my_account()
+returns void language plpgsql security definer set search_path = public, auth as $$
+declare uid uuid := auth.uid();
+begin
+  if uid is null then raise exception 'Нужно войти в аккаунт'; end if;
+  delete from auth.users where id = uid;
+end; $$;
+revoke all on function public.delete_my_account() from public, anon, authenticated;
+grant execute on function public.delete_my_account() to authenticated;
