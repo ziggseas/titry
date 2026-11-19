@@ -2,6 +2,18 @@
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// Путь картинки TMDB: только «/имя.расширение», иначе null (защита от внедрения разметки)
+export const safePoster = (p) => (typeof p === 'string' && /^\/[A-Za-z0-9_-]+\.(jpe?g|png|webp|svg)$/i.test(p) ? p : null);
+
+// Сезоны из базы: только целые положительные числа
+export function normSeasons(seasons) {
+  if (!Array.isArray(seasons)) return [];
+  return seasons
+    .map((s) => ({ n: Number(s?.n), eps: Number(s?.eps) }))
+    .filter((s) => Number.isInteger(s.n) && s.n > 0 && Number.isInteger(s.eps) && s.eps > 0 && s.eps < 10000)
+    .sort((a, b) => a.n - b.n);
+}
+
 export const yearOf = (d) => (d && /^\d{4}/.test(d) ? Number(d.slice(0, 4)) : null);
 
 // Нормализованные метаданные тайтла из ответа TMDB
@@ -13,7 +25,7 @@ export function metaFromTmdb(t, mediaHint) {
     tmdb_id: t.id,
     title: media === 'tv' ? (t.name || t.original_name || '') : (t.title || t.original_title || ''),
     year: yearOf(media === 'tv' ? t.first_air_date : t.release_date),
-    poster_path: t.poster_path || null,
+    poster_path: safePoster(t.poster_path),
   };
 }
 
@@ -66,7 +78,7 @@ export function markSeason(episodes, s, count, on = true) {
 // Отметить все серии до указанной включительно (во всех предыдущих сезонах тоже)
 export function markUpTo(episodes, seasons, s, e) {
   let ep = normEpisodes(episodes);
-  for (const se of seasons || []) {
+  for (const se of normSeasons(seasons)) {
     if (se.n < s) ep = markSeason(ep, se.n, se.eps, true);
   }
   const key = String(s);
@@ -78,12 +90,13 @@ export function markUpTo(episodes, seasons, s, e) {
 
 export function countWatched(episodes, seasons) {
   const ep = normEpisodes(episodes);
+  seasons = normSeasons(seasons);
   if (!seasons?.length) return Object.values(ep).reduce((a, l) => a + l.length, 0);
   return seasons.reduce((a, se) => a + (ep[String(se.n)] || []).filter((x) => x <= se.eps).length, 0);
 }
 
 export function totalEpisodes(seasons) {
-  return (seasons || []).reduce((a, s) => a + (s.eps || 0), 0);
+  return normSeasons(seasons).reduce((a, s) => a + s.eps, 0);
 }
 
 export function progress(episodes, seasons) {
@@ -95,7 +108,7 @@ export function progress(episodes, seasons) {
 // Первая непросмотренная серия по порядку
 export function nextEpisode(episodes, seasons) {
   const ep = normEpisodes(episodes);
-  for (const se of [...(seasons || [])].sort((a, b) => a.n - b.n)) {
+  for (const se of normSeasons(seasons)) {
     const got = new Set(ep[String(se.n)] || []);
     for (let i = 1; i <= se.eps; i++) if (!got.has(i)) return { s: se.n, e: i };
   }
@@ -250,16 +263,17 @@ export function normalizeImport(data) {
     media = /tv|series|show|сериал/.test(media) ? 'tv' : 'movie';
     const tmdb_id = Number(pick(raw, 'tmdb_id', 'tmdbId', 'tmdb', 'id'));
     if (!Number.isInteger(tmdb_id) || tmdb_id <= 0) continue;
-    const title = String(pick(raw, 'title', 'name') || '').trim();
+    const title = String(pick(raw, 'title', 'name') || '').trim().slice(0, 300);
     if (!title) continue;
     const yearRaw = pick(raw, 'year', 'release_year');
     const year = yearRaw ? Number(String(yearRaw).slice(0, 4)) || null : yearOf(pick(raw, 'release_date', 'first_air_date'));
     let poster = pick(raw, 'poster_path', 'poster', 'posterPath') || null;
     if (poster && /image\.tmdb\.org/.test(poster)) poster = poster.replace(/^.*\/t\/p\/[^/]+/, '');
+    poster = safePoster(poster);
     const status = String(pick(raw, 'status', 'state') || '').toLowerCase();
     let seasons = pick(raw, 'seasons') || [];
     if (!Array.isArray(seasons)) seasons = [];
-    seasons = seasons.map((s) => ({ n: Number(s.n ?? s.season_number ?? s.number), eps: Number(s.eps ?? s.episode_count ?? s.episodes) })).filter((s) => s.n > 0 && s.eps > 0);
+    seasons = normSeasons(seasons.map((s) => ({ n: s.n ?? s.season_number ?? s.number, eps: s.eps ?? s.episode_count ?? s.episodes })));
     const e = {
       media, tmdb_id, title, year, poster_path: poster,
       rating: clampRating(pick(raw, 'rating', 'stars', 'score')),
@@ -287,10 +301,10 @@ export function normalizeImport(data) {
   if (!Array.isArray(data) && Array.isArray(data?.logs)) {
     for (const d of data.logs) {
       if (!d?.tmdb_id || !d?.watched_on) continue;
-      logs.push({ media: d.media === 'tv' ? 'tv' : 'movie', tmdb_id: Number(d.tmdb_id), title: d.title, year: d.year ?? null, poster_path: d.poster_path ?? null, watched_on: String(d.watched_on).slice(0, 10), rating: clampRating(d.rating), liked: Boolean(d.liked), rewatch: Boolean(d.rewatch), note: d.note || null, season: d.season ?? null });
+      logs.push({ media: d.media === 'tv' ? 'tv' : 'movie', tmdb_id: Number(d.tmdb_id), title: d.title, year: d.year ?? null, poster_path: safePoster(d.poster_path), watched_on: String(d.watched_on).slice(0, 10), rating: clampRating(d.rating), liked: Boolean(d.liked), rewatch: Boolean(d.rewatch), note: d.note || null, season: d.season ?? null });
     }
   }
-  const lists = !Array.isArray(data) && Array.isArray(data?.lists) ? data.lists.filter((l) => l?.title).map((l) => ({ title: String(l.title).slice(0, 120), description: l.description || null, is_ranked: Boolean(l.is_ranked), items: (l.items || []).filter((i) => i?.tmdb_id && i?.title).map((i, k) => ({ media: i.media === 'tv' ? 'tv' : 'movie', tmdb_id: Number(i.tmdb_id), title: i.title, year: i.year ?? null, poster_path: i.poster_path ?? null, position: i.position ?? k, note: i.note || null })) })) : [];
+  const lists = !Array.isArray(data) && Array.isArray(data?.lists) ? data.lists.filter((l) => l?.title).map((l) => ({ title: String(l.title).slice(0, 120), description: l.description || null, is_ranked: Boolean(l.is_ranked), items: (l.items || []).filter((i) => i?.tmdb_id && i?.title).map((i, k) => ({ media: i.media === 'tv' ? 'tv' : 'movie', tmdb_id: Number(i.tmdb_id), title: String(i.title).slice(0, 300), year: Number(i.year) || null, poster_path: safePoster(i.poster_path), position: Number(i.position) || k, note: i.note || null })) })) : [];
   return { entries, logs, lists };
 }
 

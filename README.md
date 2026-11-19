@@ -15,13 +15,15 @@
 | `assets/config.js` | Supabase URL и anon key (публичные) |
 | `api/tmdb.js` | Серверная функция Vercel: прокси к TMDB с ключом из `TMDB_TOKEN` |
 | `supabase/schema.sql` | Таблицы, RLS, триггер профиля, `title_stats` (можно выполнять повторно) |
+| `supabase/hardening.sql` | Точные права, проверки формата и размера полей, лимиты записей (выполнять после schema.sql) |
+| `.vercelignore` | Не выкладывать на сайт служебные файлы (supabase, .github, README) |
 | `vercel.json` | Все адреса отдают `index.html` |
 | `.github/workflows/keepalive.yml` | Будит Supabase раз в три дня, чтобы проект не уснул |
 
 ## Запуск с нуля
 
 1. **TMDB.** Зарегистрируйтесь на themoviedb.org → Settings → API → скопируйте *API Read Access Token* (длинный) или *API Key*.
-2. **Supabase.** Создайте проект, в SQL Editor выполните `supabase/schema.sql`. В Project Settings → API возьмите URL и anon key и впишите в `assets/config.js` и `keepalive.yml`.
+2. **Supabase.** Создайте проект, в SQL Editor выполните `supabase/schema.sql`, затем `supabase/hardening.sql`. В Project Settings → API возьмите URL и anon key и впишите в `assets/config.js` и `keepalive.yml`.
    В Authentication → URL Configuration укажите адрес сайта в *Site URL* и добавьте `https://ваш-сайт/**` в *Redirect URLs* — иначе ссылки из писем будут вести на localhost.
 3. **Vercel.** Импортируйте репозиторий (Framework: Other, без сборки). В Settings → Environment Variables добавьте `TMDB_TOKEN`. Сделайте Redeploy.
 

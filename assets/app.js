@@ -17,14 +17,15 @@ function tmdb(path, params = {}) {
   if (tcache.has(key)) return tcache.get(key);
   const p = fetch('/api/tmdb?' + qs).then(async (r) => {
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || j.status_message || `TMDB: ошибка ${r.status}`);
+    if (r.status === 404) throw new Error('Такого фильма или сериала нет на TMDB');
+    if (!r.ok) throw new Error(j.error || `TMDB: ошибка ${r.status}`);
     return j;
   });
   tcache.set(key, p);
   p.catch(() => tcache.delete(key));
   return p;
 }
-const img = (p, size = 'w342') => (p ? `https://image.tmdb.org/t/p/${size}${p}` : '');
+const img = (p, size = 'w342') => (U.safePoster(p) ? `https://image.tmdb.org/t/p/${size}${p}` : '');
 const q$ = (sel, root = document) => root.querySelector(sel);
 const qa = (sel, root = document) => [...root.querySelectorAll(sel)];
 const nl2br = (s) => esc(s).replace(/\n/g, '<br>');
@@ -172,19 +173,24 @@ const routes = [
   [/^\/$/, viewHome],
   [/^\/search$/, viewSearch],
   [/^\/(movie|tv)\/(\d+)$/, (m, q, ctx) => viewTitle(m[1], Number(m[2]), ctx)],
-  [/^\/u\/([a-z0-9_]+)$/, (m, q, ctx) => viewProfile(m[1], q.get('tab') || 'overview', ctx)],
+  [/^\/u\/([A-Za-z0-9_]+)$/, (m, q, ctx) => (m[1] !== m[1].toLowerCase() ? go(`/u/${m[1].toLowerCase()}${location.search}`, true) : viewProfile(m[1], q.get('tab') || 'overview', ctx))],
   [/^\/list\/(\d+)$/, (m, q, ctx) => viewList(Number(m[1]), ctx)],
   [/^\/shows$/, (m, q, ctx) => viewShows(ctx)],
   [/^\/login$/, (m, q, ctx) => viewLogin(q, ctx)],
   [/^\/settings$/, (m, q, ctx) => viewSettings(ctx)],
 ];
 
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 function go(url, replace = false) {
-  if (replace) history.replaceState({}, '', url); else history.pushState({}, '', url);
+  if (replace) history.replaceState({ y: 0 }, '', url);
+  else {
+    history.replaceState({ ...(history.state || {}), y: window.scrollY }, '');
+    history.pushState({ y: 0 }, '', url);
+  }
   render();
 }
 
-async function render() {
+async function render(restoreY = null) {
   const seq = ++renderSeq;
   const ctx = { alive: () => seq === renderSeq };
   const path = location.pathname.replace(/\/+$/, '') || '/';
@@ -195,8 +201,12 @@ async function render() {
   for (const [re, fn] of routes) {
     const m = path.match(re);
     if (!m) continue;
-    try { await fn(m, q, ctx); } catch (e) {
+    try {
+      await fn(m, q, ctx);
+      if (restoreY && ctx.alive()) requestAnimationFrame(() => window.scrollTo(0, restoreY));
+    } catch (e) {
       console.error(e);
+      if (ctx.alive()) document.title = 'Ошибка — Титры';
       if (ctx.alive()) app.innerHTML = `<section class="page"><div class="error-box"><h2>Что-то пошло не так</h2><p>${esc(errText(e))}</p><a class="btn" href="/">На главную</a></div></section>`;
     }
     return;
@@ -214,7 +224,7 @@ document.addEventListener('click', (e) => {
   if (u.pathname + u.search === location.pathname + location.search && !u.hash) return;
   go(u.pathname + u.search);
 });
-window.addEventListener('popstate', render);
+window.addEventListener('popstate', (e) => render(e.state?.y ?? null));
 
 function renderHeader() {
   const p = S.profile;
@@ -328,7 +338,7 @@ function bindWatchRows(root, ctx, onChange) {
 
 async function plusOne(id) {
   let e = await getMyEntry('tv', id);
-  let seasons = e?.seasons || [];
+  let seasons = U.normSeasons(e?.seasons);
   const tv = await tmdb(`/tv/${id}`);
   const fresh = U.seasonsFromTmdb(tv);
   if (fresh.length) seasons = fresh;
@@ -430,7 +440,7 @@ async function viewTitle(media, id, ctx) {
         <div class="facts">${facts.map((f) => `<span>${esc(f)}</span>`).join('')}</div>
         ${(d.genres || []).length ? `<div class="chips">${d.genres.map((g) => `<span class="chip">${esc(g.name)}</span>`).join('')}</div>` : ''}
         ${crewNames.length ? `<div class="crew"><span class="muted">${media === 'tv' ? 'Создатели' : 'Режиссёр'}:</span> ${esc(crewNames.join(', '))}</div>` : ''}
-        ${d.tagline ? `<p class="tagline">«${esc(d.tagline)}»</p>` : ''}
+        ${d.tagline ? `<p class="tagline">«${esc(d.tagline.trim().replace(/^[«"“„']+|[»"”']+$/g, ''))}»</p>` : ''}
         <p class="overview">${esc(d.overview || 'Описания на русском пока нет.')}</p>
         ${media === 'tv' && seasons.length ? '<div id="tracker"></div>' : ''}
         ${cast.length ? `<h2 class="sec">В ролях</h2><div class="cast">${cast.map((c) => `<div class="actor">${c.profile_path ? `<img loading="lazy" src="${img(c.profile_path, 'w185')}" alt="">` : '<span class="noface"></span>'}<b>${esc(c.name)}</b><span class="muted small">${esc(c.character || c.roles?.[0]?.character || '')}</span></div>`).join('')}</div>` : ''}
@@ -748,7 +758,7 @@ async function viewProfile(username, tab, ctx) {
   if (!TABS.some(([k]) => k === tab)) tab = 'overview';
   const prof = check(await sb.from('profiles').select('*').eq('username', username).maybeSingle());
   if (!ctx.alive()) return;
-  if (!prof) { app.innerHTML = `<section class="page"><div class="error-box"><h2>Пользователь @${esc(username)} не найден</h2><a class="btn" href="/">На главную</a></div></section>`; return; }
+  if (!prof) { document.title = 'Не найдено — Титры'; app.innerHTML = `<section class="page"><div class="error-box"><h2>Пользователь @${esc(username)} не найден</h2><a class="btn" href="/">На главную</a></div></section>`; return; }
   document.title = `${nameOf(prof)} — Титры`;
   const me = isMine(prof.id);
   const uid = prof.id;
@@ -919,7 +929,7 @@ function listCard(l) {
 async function viewList(id, ctx) {
   const list = check(await sb.from('lists').select('*, profiles(username,display_name)').eq('id', id).maybeSingle());
   if (!ctx.alive()) return;
-  if (!list) { app.innerHTML = '<section class="page"><div class="error-box"><h2>Список не найден или скрыт</h2><a class="btn" href="/">На главную</a></div></section>'; return; }
+  if (!list) { document.title = 'Не найдено — Титры'; app.innerHTML = '<section class="page"><div class="error-box"><h2>Список не найден или скрыт</h2><a class="btn" href="/">На главную</a></div></section>'; return; }
   let items = check(await sb.from('list_items').select('*').eq('list_id', id).order('position').order('id'));
   if (!ctx.alive()) return;
   document.title = `${list.title} — Титры`;
@@ -1188,9 +1198,9 @@ async function exportJSON() {
 }
 
 const fullEntry = (uid, e) => ({
-  user_id: uid, media: e.media, tmdb_id: e.tmdb_id, title: e.title, year: e.year ?? null, poster_path: e.poster_path ?? null,
+  user_id: uid, media: e.media === 'tv' ? 'tv' : 'movie', tmdb_id: Number(e.tmdb_id), title: String(e.title).slice(0, 300), year: Number(e.year) || null, poster_path: U.safePoster(e.poster_path),
   rating: U.clampRating(e.rating), liked: !!e.liked, watchlist: !!e.watchlist, watched: !!e.watched, review: e.review || null, review_at: e.review ? (e.review_at || new Date().toISOString()) : null,
-  episodes: U.normEpisodes(e.episodes), seasons: Array.isArray(e.seasons) ? e.seasons : [],
+  episodes: U.normEpisodes(e.episodes), seasons: U.normSeasons(e.seasons),
 });
 
 async function mergeWithExisting(uid, rows) {
@@ -1270,7 +1280,7 @@ async function importJSON(file, box) {
     await upsertEntries(rows);
     const existingLogs = await fetchAll('logs', (t) => t.select('media,tmdb_id,watched_on').eq('user_id', uid));
     const seen = new Set(existingLogs.map((l) => `${l.media}:${l.tmdb_id}:${l.watched_on}`));
-    const newLogs = logs.filter((l) => !seen.has(`${l.media}:${l.tmdb_id}:${l.watched_on}`)).map((l) => ({ user_id: uid, media: l.media, tmdb_id: l.tmdb_id, title: l.title, year: l.year ?? null, poster_path: l.poster_path ?? null, watched_on: l.watched_on, rating: U.clampRating(l.rating), liked: !!l.liked, rewatch: !!l.rewatch, note: l.note || null, season: l.season ?? null }));
+    const newLogs = logs.filter((l) => !seen.has(`${l.media}:${l.tmdb_id}:${l.watched_on}`)).map((l) => ({ user_id: uid, media: l.media, tmdb_id: l.tmdb_id, title: String(l.title).slice(0, 300), year: Number(l.year) || null, poster_path: U.safePoster(l.poster_path), watched_on: l.watched_on, rating: U.clampRating(l.rating), liked: !!l.liked, rewatch: !!l.rewatch, note: l.note || null, season: l.season ?? null }));
     await insertChunks('logs', newLogs);
     for (const l of lists) {
       const nl = check(await sb.from('lists').insert({ user_id: uid, title: l.title, description: l.description, is_ranked: l.is_ranked }).select().single());
